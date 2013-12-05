@@ -18015,27 +18015,31 @@ BUILDIN(instance_set_respawn) {
 	
 	return true;
 }
-
 /* openshop() => opens existent (if any) npc shop into player */
 BUILDIN(openshop) {
 	struct npc_data *nd;
 	struct map_session_data *sd;
-
-	if( !(nd = map->id2nd(st->oid)) ) {
+	const char *name = NULL;
+	
+	if( script_hasdata(st, 2) ) {
+		name = script_getstr(st, 2);
+		if( !(nd = npc->name2id(name)) || nd->subtype != SCRIPT ) {
+			ShowWarning("buildin_openshop(\"%s\"): trying to run without a proper NPC!\n",name);
+			return false;
+		}
+	} else if( !(nd = map->id2nd(st->oid)) ) {
 		ShowWarning("buildin_openshop: trying to run without a proper NPC!\n");
-		script_reportsrc(st);
-		return true;
-	} else if ( !nd->u.scr.shop->items ) {
-		ShowWarning("buildin_openshop: trying to open without any items!\n");
-		script_reportsrc(st);
-		return true;
-	} else if( !( sd = script->rid2sd(st) ) ) {
+		return false;
+	}
+	if( !( sd = script->rid2sd(st) ) ) {
 		ShowWarning("buildin_openshop: trying to run without a player attached!\n");
-		script_reportsrc(st);
-		return true;
+		return false;
+	} else if ( !nd->u.scr.shop || !nd->u.scr.shop->items ) {
+		ShowWarning("buildin_openshop: trying to open without any items!\n");
+		return false;
 	}
 	
-	if( nd->u.scr.shop->currency_type[0] == NSC_ZENY && nd->u.scr.shop->currency_type[1] == NSC_ZENY ) {
+	if( nd->u.scr.shop->type == NST_ZENY ) {
 		sd->state.callshop = 1;
 		npc->buysellsel(sd,nd->bl.id,0);
 	} else
@@ -18049,21 +18053,23 @@ BUILDIN(openshop) {
 BUILDIN(sellitem) {
 	struct npc_data *nd;
 	struct item_data *it;
-	int i, id = script_getnum(st,2);
+	int i = 0, id = script_getnum(st,2);
 		
 	if( !(nd = map->id2nd(st->oid)) ) {
 		ShowWarning("buildin_sellitem: trying to run without a proper NPC!\n");
-		script_reportsrc(st);
-		return true;
+		return false;
 	} else if ( !(it = itemdb->exists(id)) ) {
 		ShowWarning("buildin_sellitem: unknown item id '%d'!\n",id);
-		script_reportsrc(st);
-		return true;
+		return false;
 	}
 
-	for( i = 0; i < nd->u.scr.shop->items; i++ ) {
-		if( nd->u.scr.shop->item[i].nameid == id )
-			break;
+	if( !nd->u.scr.shop )
+		npc->trader_update(nd->src_id?nd->src_id:nd->bl.id);
+	else {/* no need to run this if its empty */
+		for( i = 0; i < nd->u.scr.shop->items; i++ ) {
+			if( nd->u.scr.shop->item[i].nameid == id )
+				break;
+		}
 	}
 	
 	if( i != nd->u.scr.shop->items ) {
@@ -18071,8 +18077,7 @@ BUILDIN(sellitem) {
 		
 		if( value <= 0 ) {
 			ShowWarning("buildin_sellitem: can't change price to <= 0! item %s (%d) price %d\n",id,it->name,value);
-			script_reportsrc(st);
-			return true;
+			return false;
 		}
 		nd->u.scr.shop->item[i].value = value;
 	} else {
@@ -18100,10 +18105,9 @@ BUILDIN(stopselling) {
 	struct npc_data *nd;
 	int i, id = script_getnum(st,2);
 	
-	if( !(nd = map->id2nd(st->oid)) ) {
+	if( !(nd = map->id2nd(st->oid)) || !nd->u.scr.shop ) {
 		ShowWarning("buildin_stopselling: trying to run without a proper NPC!\n");
-		script_reportsrc(st);
-		return true;
+		return false;
 	}
 	
 	for( i = 0; i < nd->u.scr.shop->items; i++ ) {
@@ -18122,63 +18126,62 @@ BUILDIN(stopselling) {
 	
 	return true;
 }
-/* setcurrency(<Index>,<Type>,<Value>) */
+/* setcurrency(<Val1>,{<Val2>}) */
 BUILDIN(setcurrency) {
-	int slot = script_getnum(st,2),
-		type = script_getnum(st,3);
-	struct script_data *data;
+	int val1 = script_getnum(st,2),
+		val2 = script_hasdata(st, 3) ? script_getnum(st,3) : 0;
 	struct npc_data *nd;
-	int prev;
 	
 	if( !(nd = map->id2nd(st->oid)) ) {
 		ShowWarning("buildin_setcurrency: trying to run without a proper NPC!\n");
-		script_reportsrc(st);
-		return true;
-	} else if( slot < 0 || slot > 1 ) {
-		ShowWarning("buildin_setcurrency: invalid currency index '%d'!\n",slot);
-		script_reportsrc(st);
-		return true;
-	} else if ( type < NSC_ZENY || type > NSC_MAX ) {
-		ShowWarning("buildin_setcurrency: invalid currency type '%d'!\n",type);
-		script_reportsrc(st);
-		return true;
+		return false;
 	}
 	
-	prev = nd->u.scr.shop->currency_type[slot];
-	/* TODO: value -1 = disable index */
+	npc->trader_funds[0] = val1;
+	npc->trader_funds[1] = val2;
 	
-	data = script_getdata(st, 4);
-	script->get_val(st, data);
-	if( data_isstring(data) ) {
-		if( type == NSC_CHAR_VAR || type == NSC_ACC_VAR || type == NSC_INSTANCE_VAR ) {
-			nd->u.scr.shop->currency[slot] = script->add_str(script->conv_str(st, data));
-			nd->u.scr.shop->currency_type[slot] = type;
-		} else {
-			ShowWarning("buildin_setcurrency: invalid currency value/type combination '%s' (%d)!\n",script->conv_str(st, data),type);
-			script_reportsrc(st);
-			return true;
-		}
-	} else {
-		int val = script->conv_num(st, data);
-		if( type == NSC_ITEM && !itemdb->exists(val) ) {
-			ShowWarning("buildin_setcurrency: unknown item id '%d'!\n",val);
-			script_reportsrc(st);
-			return true;
-		}
-		if( type == NSC_ZENY || type == NSC_ITEM ) {
-			nd->u.scr.shop->currency[slot] = val;
-			nd->u.scr.shop->currency_type[slot] = type;
-		} else {
-			ShowWarning("buildin_setcurrency: invalid currency value/type combination '%d' (%d)!\n",val,type);
-			script_reportsrc(st);
-			return true;
+	return true;
+}
+/* defaults to 0, so no need to call when you're doing zeny. */
+/* tradertype(i) => 0 = zeny, 1 = cash, 2 = custom  */
+/* clears shop list on use */
+BUILDIN(tradertype) {
+	int type = script_getnum(st, 2);
+	struct npc_data *nd;
+	
+	if( !(nd = map->id2nd(st->oid)) ) {
+		ShowWarning("buildin_tradertype: trying to run without a proper NPC!\n");
+		return false;
+	} else if ( type < 0 || type > NST_MAX ) {
+		ShowWarning("buildin_tradertype: invalid type param %d!\n",type);
+		return false;
+	}
+
+	if( !nd->u.scr.shop )
+		npc->trader_update(nd->src_id?nd->src_id:nd->bl.id);
+	else {/* clear list */
+		int i;
+		for( i = 0; i < nd->u.scr.shop->items; i++ ) {
+			nd->u.scr.shop->item[i].nameid = 0;
+			nd->u.scr.shop->item[i].value = 0;
 		}
 	}
 	
-	if( prev != nd->u.scr.shop->currency_type[slot] ) {
-		ShowWarning("buildin_setcurrency: currency change from '%d' to '%d' TODO clear shop!\n",prev,nd->u.scr.shop->currency_type[slot]);
+	nd->u.scr.shop->type = type;
+	
+	return true;
+}
+/* purchaseok() signs the transaction can proceed */
+BUILDIN(purchaseok) {
+	struct npc_data *nd;
+	
+	if( !(nd = map->id2nd(st->oid)) || !nd->u.scr.shop ) {
+		ShowWarning("buildin_purchaseok: trying to run without a proper NPC!\n");
+		return false;
 	}
-			
+
+	npc->trader_ok = true;
+	
 	return true;
 }
 
@@ -18779,10 +18782,12 @@ void script_parse_builtin(void) {
 		BUILDIN_DEF(bg_match_over,"s?"),
 		
 		/* New Shop Support */
-		BUILDIN_DEF(openshop,""),
+		BUILDIN_DEF(openshop,"?"),
 		BUILDIN_DEF(sellitem,"i?"),
 		BUILDIN_DEF(stopselling,"i"),
-		BUILDIN_DEF(setcurrency,"ii?"),
+		BUILDIN_DEF(setcurrency,"i?"),
+		BUILDIN_DEF(tradertype,"i"),
+		BUILDIN_DEF(purchaseok,""),
 	};
 	int i, len = ARRAYLENGTH(BUILDIN);
 	RECREATE(script->buildin, char *, script->buildin_count + len); // Pre-alloc to speed up

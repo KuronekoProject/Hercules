@@ -20,14 +20,12 @@ enum npc_parse_options {
 	NPO_TRADER	= 0x2,
 };
 
-enum npc_shop_currency_types {
-	NSC_ZENY,
-	NSC_CHAR_VAR,
-	NSC_ACC_VAR,
-	NSC_INSTANCE_VAR,
-	NSC_ITEM,
+enum npc_shop_types {
+	NST_ZENY,/* default */
+	NST_CASH,/* */
+	NST_CUSTOM,
 	/* */
-	NSC_MAX,
+	NST_MAX,
 };
 
 struct npc_timerevent_list {
@@ -38,14 +36,14 @@ struct npc_label_list {
 	int pos;
 };
 struct npc_item_list {
-	unsigned int nameid,value;
+	unsigned short nameid;
+	unsigned int value;
 };
 
 struct npc_shop_data {
-	struct npc_item_list *item;
-	int items;//count
-	int currency[2];/* npcs can have 2 currencies (official on cash shops), primary and secondary */
-	enum npc_shop_currency_types currency_type[2];
+	unsigned char type;/* what am i */
+	struct npc_item_list *item;/* list */
+	unsigned short items;/* total */
 };
 
 struct npc_data {
@@ -89,7 +87,7 @@ struct npc_data {
 		} scr;
 		struct {/* TODO duck this as soon as the new shop formatting is deemed stable */
 			struct npc_item_list* shop_item;
-			int count;
+			unsigned short count;
 		} shop;
 		struct {
 			short xs,ys; // OnTouch area radius
@@ -169,6 +167,9 @@ struct npc_interface {
 	struct npc_data *fake_nd;
 	struct npc_src_list *src_files;
 	struct unit_data base_ud;
+	/* npc trader global data, for ease of transition between the script, cleared on every usage */
+	bool trader_ok;
+	int trader_funds[2];
 	/* */
 	int (*init) (bool minimal);
 	int (*final) (void);
@@ -212,12 +213,9 @@ struct npc_interface {
 	int (*scriptcont) (struct map_session_data *sd, int id, bool closing);
 	int (*buysellsel) (struct map_session_data *sd, int id, int type);
 	int (*cashshop_buylist) (struct map_session_data *sd, int points, int count, unsigned short *item_list);
-	int (*cashshop_buylist2) (struct map_session_data *sd, struct npc_data *nd, int points, int count, unsigned short* item_list);
 	int (*buylist_sub) (struct map_session_data *sd, int n, unsigned short *item_list, struct npc_data *nd);
 	int (*cashshop_buy) (struct map_session_data *sd, int nameid, int amount, int points);
-	int (*cashshop_buy2) (struct map_session_data *sd, int nameid, int amount, int points);
 	int (*buylist) (struct map_session_data *sd, int n, unsigned short *item_list);
-	int (*buylist2) (struct map_session_data* sd, int n, unsigned short* item_list);
 	int (*selllist_sub) (struct map_session_data *sd, int n, unsigned short *item_list, struct npc_data *nd);
 	int (*selllist) (struct map_session_data *sd, int n, unsigned short *item_list);
 	int (*remove_map) (struct npc_data *nd);
@@ -258,11 +256,13 @@ struct npc_interface {
 	int (*ev_label_db_clear_sub) (DBKey key, DBData *data, va_list args);
 	int (*reload) (void);
 	bool (*unloadfile) (const char *filepath);
-	void (*get_currency) (struct map_session_data *sd, struct npc_data *nd, int *val1, int *val2);
-	bool (*pay_currency) (struct map_session_data *sd, struct npc_data *nd, int qty1, int qty2);
 	void (*do_clear_npc) (void);
 	void (*debug_warps_sub) (struct npc_data *nd);
 	void (*debug_warps) (void);
+	/* */
+	void (*trader_count_funds) (struct npc_data *nd, struct map_session_data *sd);
+	bool (*trader_pay) (struct npc_data *nd, struct map_session_data *sd, int price, int points);
+	void (*trader_update) (int master);
 	/**
 	 * For the Secure NPC Timeout option (check config/Secure.h) [RR]
 	 **/
