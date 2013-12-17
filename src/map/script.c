@@ -18054,6 +18054,7 @@ BUILDIN(sellitem) {
 	struct npc_data *nd;
 	struct item_data *it;
 	int i = 0, id = script_getnum(st,2);
+	int value = script_hasdata(st,3) ? script_getnum(st, 3) : it->value_buy;
 		
 	if( !(nd = map->id2nd(st->oid)) ) {
 		ShowWarning("buildin_sellitem: trying to run without a proper NPC!\n");
@@ -18072,13 +18073,12 @@ BUILDIN(sellitem) {
 		}
 	}
 	
+	if( nd->u.scr.shop->type == NST_ZENY && value*0.75 < it->value_sell*1.24 ) {
+		ShowWarning("buildin_sellitem: Item %s [%d] discounted buying price (%d->%d) is less than overcharged selling price (%d->%d) in NPC %s (%s)\n",
+					it->name, id, value, (int)(value*0.75), it->value_sell, (int)(it->value_sell*1.24), nd->exname, nd->path);
+	}
+	
 	if( i != nd->u.scr.shop->items ) {
-		int value = script_hasdata(st,3) ? script_getnum(st, 3) : it->value_buy;
-		
-		if( value <= 0 ) {
-			ShowWarning("buildin_sellitem: can't change price to <= 0! item %s (%d) price %d\n",id,it->name,value);
-			return false;
-		}
 		nd->u.scr.shop->item[i].value = value;
 	} else {
 		for( i = 0; i < nd->u.scr.shop->items; i++ ) {
@@ -18086,14 +18086,17 @@ BUILDIN(sellitem) {
 				break;
 		}
 
-		if( i != nd->u.scr.shop->items )
-			;
-		else {
+		if( i == nd->u.scr.shop->items ) {
+			if( nd->u.scr.shop->items == USHRT_MAX ) {
+				ShowWarning("buildin_sellitem: Can't add %s (%s/%s), shop list is full!\n", it->name, nd->exname, nd->path);
+				return false;
+			}
 			i = nd->u.scr.shop->items;
 			RECREATE(nd->u.scr.shop->item, struct npc_item_list, ++nd->u.scr.shop->items);
 		}
+		
 		nd->u.scr.shop->item[i].nameid	= it->nameid;
-		nd->u.scr.shop->item[i].value	= script_hasdata(st,3) ? script_getnum(st, 3) : it->value_buy;
+		nd->u.scr.shop->item[i].value	= value;
 	}
 
 	return true;
@@ -18116,6 +18119,7 @@ BUILDIN(stopselling) {
 	}
 	
 	if( i != nd->u.scr.shop->items ) {
+		/*  https://github.com/HerculesWS/Hercules/commit/c660ddc4019f2b65bd2587b67f4e2435dff520a9#commitcomment-4851826 */
 		/* we don't move the array / resize since its a big chunk of sequential memory */
 		nd->u.scr.shop->item[i].nameid = 0;
 		nd->u.scr.shop->item[i].value = 0;
